@@ -128,10 +128,12 @@ specify patient counts. They are kept for facility-presence analysis
 
 ### Emergencias 2025 (342,753 rows)
 - 19,458 fully duplicated rows → drop with `drop_duplicates()`.
-- ~16,206 rows share key (CO_IPRESS, MES, SEXO, EDAD) but differ in
-  NRO_TOTAL_ATENCIONES: these are treated as partial resubmissions.
+- Remaining rows that share key (CO_IPRESS, ANHO, MES, SEXO, EDAD) but
+  differ in NRO_TOTAL_ATENCIONES are treated as partial resubmissions.
   Decision: group by key and SUM the attention counts. This preserves
-  all reported activity.
+  all reported activity. The groupby collapsed more resubmissions than
+  initially estimated (~15k additional beyond the 19k exact duplicates),
+  yielding 307,703 rows rather than the preliminary estimate of ~323k.
 - NE_0001 placeholders (~13% of rows) → convert to NaN in
   NRO_TOTAL_ATENCIONES and NRO_TOTAL_ATENDIDOS; these rows still count
   for facility presence but not for activity volume.
@@ -139,27 +141,68 @@ specify patient counts. They are kept for facility-presence analysis
   The 28,510 unmatched rows are kept — they still have valid UBIGEO for
   district-level aggregation.
 - UBIGEO match with DISTRITOS: 98.98%. Drop the 12 unmatched UBIGEOs.
-- Output: `emergencias_clean.parquet`.
+- Output: `emergencias_clean.parquet` (307,703 rows).
 
 ### Centros Poblados CCPP_IGN100K.shp (136,587 features)
 - Structural "duplicates": 60,037 IGN records overlap with 75,164 INEI
   records (same places, different catalogs).
 - Decision: keep INEI source only (FUENTE == 'INEI') because its CÓDIGO
   prefix matches UBIGEO. This retains 75,164 representative features.
-- 680 IGN records with 9-digit CÓDIGO are excluded from code-based joins
-  (they are Puno-prefixed codes labeled as Ancash — IGN internal codes,
-  not UBIGEO). If needed, they can be assigned to districts via spatial
-  join using their geometry.
+- Of those 75,164 INEI records, 38,862 have null CÓDIGO. These are kept
+  with UBIGEO = NaN (nullable Int64). Their district will be assigned in
+  Task 2 via spatial join (point-in-polygon against DISTRITOS) rather than
+  by code. Discarding them would eliminate 52% of INEI records, harming
+  index component C (distance from populated centers to nearest IPRESS).
+- 397 INEI records with 9-digit CÓDIGO are excluded from output (same
+  IGN-internal prefix issue found in the full dataset). Final INEI output:
+  75,164 − 397 = 74,767 rows.
 - The Y column has a known bug (Y=X in ~45% of rows) → ignore Y, use
   only `geometry` for spatial operations.
-- Output: `centros_poblados.gpkg` (CRS EPSG:4326).
+- Output: `centros_poblados.gpkg` (CRS EPSG:4326, 74,767 rows).
 
-### Quantitative impact of cleaning decisions
+### Quantitative impact of cleaning decisions (verified against run_cleaning.py output)
 | Dataset | Raw rows | After cleaning | % retained |
 |---|---|---|---|
-| DISTRITOS | 1,873 | 1,873 | 100% |
+| DISTRITOS | 1,873 | 1,873 | 100.0% |
 | IPRESS (all) | 20,819 | 20,793 | 99.9% |
-| IPRESS (geo) | 20,819 | 7,953 | 38.2% |
-| Emergencias | 342,753 | ~323,295 | 94.3% |
-| Centros poblados (INEI only) | 136,587 | 75,164 | 55.0% |
+| IPRESS (geo) | 20,819 | 7,941 | 38.1% |
+| Emergencias | 342,753 | 307,703 | 89.8% |
+| Centros poblados (INEI only) | 136,587 | 74,767 | 54.7% |
 
+---
+
+## Implementation notes — key design decisions
+
+### Robust column access
+- In `clean_ipress`, "Código Único" is accessed by column index (`df.columns[1]`)
+  rather than by name. The name contains a tilde that can decode differently
+  across OS/encoding configurations.
+- In `clean_ccpp`, the CÓDIGO column is detected by content (strings of 9-10
+  digits) rather than by name, for the same reason.
+
+### Function purity
+- `clean_emergencias` accepts `valid_ubigeos` as a parameter instead of reading
+  the district shapefile internally. This keeps the function pure and testable;
+  the orchestrator (`run_cleaning.py`) is responsible for wiring inputs.
+
+### Handling of "not reported" vs "reported zero"
+- When aggregating emergency counts with `groupby.sum()`, we pass `min_count=1`.
+  This ensures that a group with all-NaN values (no valid report) stays NaN,
+  instead of being collapsed to 0. Zero reported emergencies and absence of
+  a report are conceptually different and must not be conflated.
+
+### Combined boolean masks
+- IPRESS coordinate validation uses a single combined boolean mask (null-check,
+  zero-check, bbox-check) instead of sequential filters. This is more readable
+  and avoids silent bugs if a criterion is forgotten.
+
+### Case normalization
+- CCPP's `FUENTE` filter uses `.str.upper() == 'INEI'` to capture both 'INEI'
+  and 'inei' variants present in the raw data.
+
+### pandas 2.0 StringDtype compatibility
+- In pandas 2.0+, string columns loaded via geopandas have dtype `StringDtype`
+  rather than `object`. The condition `gdf[c].dtype == object` returns False for
+  all string columns, causing `StopIteration` in the CÓDIGO column detector.
+  Fixed by replacing the dtype check with `pd.api.types.is_string_dtype(gdf[c])`,
+  which returns True for both `object` and `StringDtype`.
