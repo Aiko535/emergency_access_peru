@@ -92,3 +92,74 @@ In both files, ~14% of rows contain "NE_0001" in NRO_TOTAL_ATENCIONES
 and related fields. These represent reporting facilities that did not
 specify patient counts. They are kept for facility-presence analysis
 (component A) but excluded from activity calculations (component B).
+
+---
+
+## Task 1 — Cleaning decisions (final)
+
+### Teacher's conventions applied (from Geopandas1.ipynb)
+- Use `chardet` to detect encoding before reading CSVs.
+- Keep column names as-is (NORTE, ESTE, CAMAS, UBIGEO in uppercase).
+- Use UBIGEO as master join key (cast to int).
+- Rename IDDIST to UBIGEO in the districts shapefile.
+- CRS: EPSG:4326 for display, EPSG:32718 for distance computations.
+- NORTE = longitude, ESTE = latitude (preserve this "inverted" naming
+  documented by the teacher).
+- Use `gpd.points_from_xy(df.NORTE, df.ESTE)` (longitude first).
+- Use `pd.merge(..., how="inner", on="UBIGEO")` and
+  `gpd.overlay(points, polys, how="intersection")`.
+
+### DISTRITOS.shp
+- 1,873 districts, EPSG:4326, zero duplicates.
+- Action: rename IDDIST → UBIGEO, cast to int, select relevant columns,
+  save to `data/processed/distritos.gpkg`.
+
+### IPRESS (20,819 rows → ~20,793 kept)
+- 26 duplicates by "Código Único" → drop with `keep='first'`.
+- Coordinate cleaning:
+  - 12,863 rows have no NORTE/ESTE (kept for availability analysis,
+    excluded from spatial analysis).
+  - 3 rows have NORTE==0 or ESTE==0 → drop.
+  - 0 additional out-of-Peru-bbox points.
+  - Final: 7,953 rows with valid geometry.
+- Two outputs:
+  - `ipress_clean.parquet` (all 20,793 rows).
+  - `ipress_geo.gpkg` (7,953 rows with geometry, CRS EPSG:4326).
+
+### Emergencias 2025 (342,753 rows)
+- 19,458 fully duplicated rows → drop with `drop_duplicates()`.
+- ~16,206 rows share key (CO_IPRESS, MES, SEXO, EDAD) but differ in
+  NRO_TOTAL_ATENCIONES: these are treated as partial resubmissions.
+  Decision: group by key and SUM the attention counts. This preserves
+  all reported activity.
+- NE_0001 placeholders (~13% of rows) → convert to NaN in
+  NRO_TOTAL_ATENCIONES and NRO_TOTAL_ATENDIDOS; these rows still count
+  for facility presence but not for activity volume.
+- Match with IPRESS catalog: 89.6% (545 CO_IPRESS newer than catalog).
+  The 28,510 unmatched rows are kept — they still have valid UBIGEO for
+  district-level aggregation.
+- UBIGEO match with DISTRITOS: 98.98%. Drop the 12 unmatched UBIGEOs.
+- Output: `emergencias_clean.parquet`.
+
+### Centros Poblados CCPP_IGN100K.shp (136,587 features)
+- Structural "duplicates": 60,037 IGN records overlap with 75,164 INEI
+  records (same places, different catalogs).
+- Decision: keep INEI source only (FUENTE == 'INEI') because its CÓDIGO
+  prefix matches UBIGEO. This retains 75,164 representative features.
+- 680 IGN records with 9-digit CÓDIGO are excluded from code-based joins
+  (they are Puno-prefixed codes labeled as Ancash — IGN internal codes,
+  not UBIGEO). If needed, they can be assigned to districts via spatial
+  join using their geometry.
+- The Y column has a known bug (Y=X in ~45% of rows) → ignore Y, use
+  only `geometry` for spatial operations.
+- Output: `centros_poblados.gpkg` (CRS EPSG:4326).
+
+### Quantitative impact of cleaning decisions
+| Dataset | Raw rows | After cleaning | % retained |
+|---|---|---|---|
+| DISTRITOS | 1,873 | 1,873 | 100% |
+| IPRESS (all) | 20,819 | 20,793 | 99.9% |
+| IPRESS (geo) | 20,819 | 7,953 | 38.2% |
+| Emergencias | 342,753 | ~323,295 | 94.3% |
+| Centros poblados (INEI only) | 136,587 | 75,164 | 55.0% |
+
