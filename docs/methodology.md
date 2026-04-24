@@ -263,3 +263,73 @@ specify patient counts. They are kept for facility-presence analysis
 - **Deduplication after sjoin**: `~joined.index.duplicated(keep='first')`
   handles the rare edge case of a point lying exactly on a shared polygon
   boundary, which would otherwise produce duplicate rows.
+
+---
+
+## Task 3 -- District-level access index (final results)
+
+### Emergency IPRESS flag
+| Mode | Districts with >=1 emergency IPRESS |
+|---|---|
+| baseline (conservative) | 329 |
+| alternative (permissive) | 467 |
+
+The permissive mode adds 138 districts by including 24-hour facilities
+without inpatient beds and hospitals regardless of schedule.
+
+### Component C -- spatial distances
+- Baseline median (district mean distance to nearest emergency IPRESS): **19.5 km**
+- Alternative median: **15.8 km**
+
+The 3.7 km reduction reflects the 138 additional emergency IPRESS in
+the alternative mode, which are closer on average to previously
+underserved districts.
+
+### Index distributions (1,812 districts ranked; 61 excluded due to n_ccpp=0)
+
+| Metric | Baseline (1/3,1/3,1/3) | Alternative (0.25,0.25,0.50) |
+|---|---|---|
+| Mean | 0.309 | 0.462 |
+| Std | 0.033 | 0.042 |
+| Min | 0.000 | 0.000 |
+| Max | 0.733 | 0.781 |
+| Top district (UBIGEO) | 40126 | 140101 |
+| Bottom district (UBIGEO) | 160804 | 160110 |
+
+**Baseline top**: UBIGEO 40126 -- highest emergency visit volume (B_norm=1.0)
+combined with near-zero distance to emergency IPRESS (C_norm_inverted=0.999).
+
+**Alternative top**: UBIGEO 140101 -- maximum facility availability
+(A_norm=1.0) dominates under equal A/B weights; its already-high
+C_norm_inverted (0.988) is further amplified by the 0.50 spatial weight.
+
+**Bottom districts**: UBIGEO 160804 (baseline) and 160110 (alternative) --
+zero emergency IPRESS, zero recorded attentions, and the worst spatial
+access among all ranked districts (C_norm_inverted near 0).
+
+### Sensitivity analysis
+- 1,807 of 1,812 ranked districts change position between specifications.
+- Maximum absolute rank change: **1,638 positions** (UBIGEO 180301: rank
+  1,655 in baseline -> rank 17 in alternative).
+
+**Interpretation**: The districts most sensitive to weight choice are those
+with no local emergency IPRESS but geographically close to an emergency
+IPRESS in a neighbouring district. Under the baseline (equal weights), the
+absence of local facilities (A=0) and low activity (B~0) dominate, pushing
+them toward the bottom. Under the alternative, the doubled spatial weight
+(0.50) rewards their proximity, lifting them sharply in the ranking. This
+pattern directly addresses the research question on methodological
+sensitivity (Pregunta 4): conclusions about which districts are
+"poorly served" are highly dependent on whether the index treats spatial
+access as equivalent to facility presence and activity, or as the binding
+constraint.
+
+### Outputs
+| File | Location |
+|---|---|
+| district_index_baseline.parquet | data/processed/ |
+| district_index_alternative.parquet | data/processed/ |
+| district_index_comparison.parquet | data/processed/ |
+| top_bottom_10_districts_baseline.csv | output/tables/ |
+| top_bottom_10_districts_alternative.csv | output/tables/ |
+| rank_changes_top20.csv | output/tables/ |
