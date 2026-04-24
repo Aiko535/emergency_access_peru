@@ -206,3 +206,60 @@ specify patient counts. They are kept for facility-presence analysis
   all string columns, causing `StopIteration` in the CÓDIGO column detector.
   Fixed by replacing the dtype check with `pd.api.types.is_string_dtype(gdf[c])`,
   which returns True for both `object` and `StringDtype`.
+
+---
+
+## Task 2 — Geospatial integration (final results)
+
+### IPRESS district assignment
+- `gpd.sjoin(how='left', predicate='within')` in EPSG:4326.
+- **7,939 of 7,941** geolocated IPRESS matched to a district.
+- 2 IPRESS fall outside every district polygon (coastal/boundary points);
+  these retain `UBIGEO_district = NaN` and are excluded from spatial counts.
+- Output: `ipress_with_district.gpkg`.
+
+### CCPP district assignment
+- Same `gpd.sjoin` approach applied to all 74,767 CCPP.
+- The 38,862 records with `UBIGEO = NaN` (no CÓDIGO in the raw data) were
+  fully resolved by the spatial join → **0 unassigned after Step 2**.
+- **1,035 mismatches** detected between the code-derived UBIGEO (`CÓDIGO[:6]`)
+  and the spatially-containing district. These are populated centers whose
+  administrative code points to a different district than their geographic
+  location. Code-based UBIGEO is kept as authoritative (emitted as a
+  `UserWarning`, not an error). Represents 2.9% of code-holding records.
+- Output: `ccpp_with_district.gpkg`.
+
+### Nearest-IPRESS distances
+- `gpd.sjoin_nearest()` in EPSG:32718 (metres) — Euclidean distance.
+- Computed from every CCPP to the nearest IPRESS in the full geolocated set.
+  (In Task 3, this will be rerun on the emergency-capable IPRESS subset.)
+- Distance statistics across CCPP points:
+  - Median: **3.3 km**
+- Distance statistics aggregated to district level (mean per district):
+  - Median across districts: **3.2 km**
+  - p25 / p75: **2.2 km / 5.1 km**
+  - Max: **115.1 km** (remote districts, likely Amazon/highlands)
+- Output: `district_spatial_summary.{parquet,gpkg}`.
+
+### District coverage gaps
+| Gap | Districts | Notes |
+|---|---|---|
+| No IPRESS (administrative) | 14 | No facility reported in SUSALUD for that district |
+| No IPRESS (geolocated) | 56 | Facility exists administratively but no verified coords |
+| No CCPP assigned | 61 | No populated center assigned; may lack settlements or coords |
+
+### Design decisions — Task 2
+- **Two UBIGEO columns in ipress_with_district**: `UBIGEO` (administrative,
+  from IPRESS catalogue) and `UBIGEO_district` (spatial). Keeping both allows
+  downstream detection of facilities that are administratively attributed to
+  a different district than where they are physically located.
+- **GPKG round-trip coerces nullable Int64 → float64**: GPKG does not support
+  nullable integer types. CCPP `UBIGEO` reloads as `float64`; all comparisons
+  and casts account for this explicitly.
+- **Only geometry travels to `sjoin_nearest`**: accented column names
+  ('Código Único') can produce unexpected suffix collisions (`_left`/`_right`)
+  in join results. Both GeoDataFrames are reduced to `[geometry]` before the
+  join; the IPRESS code is re-attached under the alias `CODIGO_IPRESS`.
+- **Deduplication after sjoin**: `~joined.index.duplicated(keep='first')`
+  handles the rare edge case of a point lying exactly on a shared polygon
+  boundary, which would otherwise produce duplicate rows.
