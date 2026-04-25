@@ -1,246 +1,73 @@
-# emergency_access_peru
-District-level emergency healthcare access analysis in Peru.
-
-## Project structure
-
-```
-data/
-  raw/          Original datasets (not modified)
-  processed/    Cleaned and integrated outputs
-docs/
-  methodology.md   Full decisions log for all tasks
-output/
-  figures/      Static PNG visualizations (Task 4)
-  tables/       CSV ranking tables (Task 3)
-src/
-  utils.py           Encoding detection, directory helpers
-  data_loader.py     Raw dataset loaders (read-only)
-  cleaning.py        Per-dataset cleaning functions (Task 1)
-  geospatial.py      Spatial joins and district aggregation (Task 2)
-  metrics.py         Index components and composite index (Task 3)
-  visualization.py   Static matplotlib/seaborn figures (Task 4)
-run_cleaning.py      Task 1 orchestrator
-run_geospatial.py    Task 2 orchestrator
-run_metrics.py       Task 3 orchestrator
-run_visualization.py Task 4 orchestrator
-```
-
-## How to run
+## Instalación
 
 ```bash
-python run_cleaning.py       # Task 1: load, clean, save to data/processed/
-python run_geospatial.py     # Task 2: spatial joins, district aggregation
-python run_metrics.py        # Task 3: compute index, rank districts, compare specs
-python run_visualization.py  # Task 4: generate PNG figures to output/figures/
+git clone https://github.com/Aiko535/emergency_access_peru.git
+cd emergency_access_peru
+python -m venv venv
+.\venv\Scripts\Activate.ps1   # Windows
+pip install -r requirements.txt
 ```
 
-Each script must be run from the project root with the virtual environment
-active. Scripts must be run in order: each task depends on the previous task's
-outputs in `data/processed/`.
+## Reproducir el pipeline
 
----
+Descargar los datos crudos en `data/raw/` (ver sección Datasets) y ejecutar **en orden**:
 
-## CRS handling
+```bash
+python run_cleaning.py       # Tarea 1: limpieza y carga
+python run_geospatial.py     # Tarea 2: spatial joins
+python run_metrics.py        # Tarea 3: índice + sensibilidad
+python run_visualization.py  # Tarea 4: gráficos estáticos
+python run_mapping.py        # Tarea 5: mapas estáticos + Folium
+```
 
-### Why two coordinate reference systems?
+## Correr la app de Streamlit
 
-This project uses two CRS for different purposes, following the teacher's
-convention from `docs/references/Geopandas1.ipynb`:
+```bash
+streamlit run app.py
+```
 
-### EPSG:4326 — WGS84 (degrees)
+Abrir `http://localhost:8501`. La app contiene 4 pestañas: Data & Metodología, Análisis Estático, Resultados Geoespaciales y Exploración Interactiva.
 
-Used for **storage, display, and spatial overlay**.
+## Visualizaciones generadas (Tarea 4)
 
-- All raw shapefiles (DISTRITOS, CCPP, IPRESS) arrive in EPSG:4326.
-- All processed `.gpkg` outputs are stored in EPSG:4326.
-- Point-in-polygon joins (`gpd.sjoin(..., predicate='within')`) run in
-  EPSG:4326 because overlay correctness depends on consistent coordinates,
-  not metric units.
-- Folium maps require EPSG:4326.
+Cada figura responde a una pregunta específica con justificación metodológica:
 
-### EPSG:32718 — WGS84 / UTM Zone 18S (metres)
+| Figura | Pregunta | Tipo y por qué | Hallazgo clave |
+|---|---|---|---|
+| fig01_index_distribution | P4 | KDE (no histograma — evita sesgo por bin-width) | Alternativa desplaza la media de 0.31 a 0.46 |
+| fig02_top_bottom_districts | P3 | Barras horizontales (nombres largos; boxplot ocultaría unidades) | Yanahuara (Arequipa) y Chiclayo lideran; bottom dominado por Loreto |
+| fig03_distance_by_department | P2 | Boxplot ordenado por mediana (revela heterogeneidad intra-departamental) | Loreto/Ucayali con dispersiones extremas (>300 km) |
+| fig04_supply_vs_activity | P1 | Bubble chart con eje Y capeado al p95 + outliers como triángulos | Más IPRESS no implica más atenciones |
+| fig05_rank_changes | P4 | Scatter rank-rank con diagonal (muestra dirección, no solo magnitud) | Top 20 cambiantes tienen alta proximidad pero baja oferta |
+| fig06_component_heatmap | P3+P4 | Heatmap de 3 grupos × 3 componentes (compara perfiles simultáneamente) | Bottom 30 falla en A y B, no en C: el problema es de oferta, no distancia |
 
-Used exclusively for **distance and area calculations**.
+## Mapas (Tarea 5)
 
-- UTM Zone 18S covers mainland Peru with low distortion.
-- `gpd.sjoin_nearest(..., distance_col='distance_m')` runs in EPSG:32718
-  so that `distance_m` is in metres, not degrees.
-- Any future area-based normalization (e.g., IPRESS per km²) must also
-  use EPSG:32718.
+| Mapa | Descripción |
+|---|---|
+| map01_choropleth_baseline.png | Choropleth nacional del índice baseline (escala viridis); distritos excluidos en gris |
+| map02_choropleth_comparison.png | Panel izquierdo: baseline. Panel derecho: cambio firmado de ranking (RdBu — azul mejora, rojo empeora) |
+| map03_lima_ipress.png | Choropleth de Lima Metropolitana con 475 IPRESS de emergencia sobrepuestas |
+| map04_interactive_national.html | Folium con choropleth + capa IPRESS clickable + LayerControl |
+| map05_interactive_comparison.html | Folium con magnitud de cambio + Top 20 markers con popups |
 
-### Where reprojection happens
+## Hallazgos principales
 
-| Operation | CRS used | Function |
-|---|---|---|
-| Load raw shapefiles | EPSG:4326 (as-is) | `data_loader.py` |
-| Point-in-polygon district assignment | EPSG:4326 | `assign_ipress_to_districts`, `assign_ccpp_to_districts` |
-| Nearest-IPRESS distance | EPSG:32718 | `nearest_ipress_per_ccpp` via `to_metric()` |
-| Save all outputs | EPSG:4326 | `run_cleaning.py`, `run_geospatial.py` |
-| Future: distance index component | EPSG:32718 | Task 3 |
+1. **Los 5 distritos con menor acceso son todos de Loreto** (Yaguas, Yavari, Ramón Castilla, Teniente Manuel Clavero, Torres Causana), confirmando una brecha amazónica severa.
+2. **Más IPRESS no garantiza más atenciones**: distritos con 1 IPRESS pueden tener volúmenes muy altos, mientras otros con varias IPRESS reportan poca actividad.
+3. **El cambio de pesos afecta drásticamente el ranking**: 1,807 de 1,812 distritos cambian de posición, y un distrito puede moverse hasta 1,638 puestos según la especificación. Esto indica que las recomendaciones de política deben acompañarse de análisis de sensibilidad.
+4. **Los rank-changers tienen un perfil específico**: alta proximidad a IPRESS (componente C) pero baja oferta y actividad — son distritos que se benefician artificialmente de pesar más la distancia.
+5. **El Bottom 30 falla principalmente en disponibilidad y actividad**, no en distancia. Esto sugiere que el problema no es solo geográfico sino estructural — falta de IPRESS instaladas y operativas.
 
-Reprojection is performed with `gdf.to_crs("EPSG:32718")` inside
-`to_metric()` and `gdf.to_crs("EPSG:4326")` inside `to_wgs84()` in
-`src/geospatial.py`. The original GeoDataFrames are never modified in place;
-reprojection returns a new object scoped to the function that needs it.
+## Limitaciones
 
-### Why not use a single CRS throughout?
+- **Distancia euclídea, no caminata real ni tiempo de viaje**: en zonas amazónicas con ríos y selva, la distancia recta subestima severamente el tiempo de acceso.
+- **Subregistro probable** en zonas rurales del componente B (atenciones registradas).
+- **Centros poblados como proxy poblacional**: un CCPP en Lima no equivale a uno en Loreto en términos de población.
+- **Distritos sin CCPP asignado** (61 distritos) son excluidos del ranking.
+- **El índice es relativo (ranking)**, no una medida absoluta de cobertura.
+- **No incorpora capacidad instalada** (camas, médicos, equipamiento) — solo presencia y actividad registrada.
 
-Degree-based distances are non-uniform: one degree of longitude near Lima
-(~12 S) is approximately 96 km, but this varies with latitude. Using
-EPSG:4326 for `sjoin_nearest` would return distances in degrees that cannot
-be directly converted to metres without introducing error. EPSG:32718
-eliminates this issue for the Peruvian territory covered by this project.
+## Documentación adicional
 
----
-
-## Visualizations (Task 4)
-
-Six static figures in `output/figures/`, generated by `run_visualization.py`
-using matplotlib and seaborn. Each figure was chosen to answer a specific
-analytical question; the rationale and the rejected alternative are noted.
-
----
-
-### fig01 — Distribucion del indice (KDE overlay)
-**File:** `output/figures/fig01_index_distribution.png`
-**Answers:** Pregunta 4 — sensibilidad metodologica.
-
-Shows the full distribution of the composite index under the baseline
-(weights 1/3, 1/3, 1/3) and alternative (0.25, 0.25, 0.50) specifications
-as overlapping KDE curves, with dashed vertical lines at each mean.
-
-**Why KDE and not a histogram:** With 1,812 ranked districts, KDE produces
-a smooth shape that makes the shift and widening of the distribution
-immediately visible without requiring the reader to choose a bin width.
-A histogram with wide bins loses the shape; with narrow bins it becomes
-noisy. The KDE answer — the alternative distribution is shifted right
-(mean 0.462 vs 0.309) and has greater spread — is unambiguous.
-
-**Key finding:** Doubling the weight on spatial access lifts a large
-cluster of mid-range districts, confirming that the methodological choice
-has a systematic, not random, effect on rankings.
-
----
-
-### fig02 — Top 15 / Bottom 15 distritos (barplot horizontal)
-**File:** `output/figures/fig02_top_bottom_districts.png`
-**Answers:** Pregunta 3 — que distritos tienen mejor y peor acceso?
-
-Side-by-side horizontal bar charts of the 15 best and 15 worst districts
-by baseline index. Each bar label includes the district name and a 3-letter
-department abbreviation (e.g., "San Juan Bautista (LOR)"). Two fixed colors
-— blue for top, red for bottom — with numeric index values annotated on
-each bar.
-
-**Why two colors and not color-by-department:** 30 districts may span
-15+ departments, which would require 15+ distinguishable colors — beyond
-what any qualitative palette can reliably deliver. The department
-abbreviation in the label provides the same geographic context without
-visual noise. The two-color scheme keeps the reader's eye on the ranking,
-which is the actual answer to the question.
-
-**Key finding:** The best-access districts (e.g., UBIGEO 40126, 140101)
-combine high emergency-IPRESS density with near-zero distance to emergency
-facilities. The worst (UBIGEO 160804, 160804 group) score zero on all
-three components — no IPRESS, no reported activity, maximum distance.
-
----
-
-### fig03 — Distancia por departamento (boxplot horizontal)
-**File:** `output/figures/fig03_distance_by_department.png`
-**Answers:** Pregunta 2 — hay brechas geograficas y regionales?
-
-Horizontal boxplot: one box per department (25 total), x-axis shows mean
-district distance (km) to the nearest emergency IPRESS, ordered by
-department median from smallest (bottom) to largest (top).
-
-**Why a boxplot and not a bar chart of means:** A bar chart of department
-means would hide within-department heterogeneity — two departments with
-the same mean can have very different distributions (one uniform, one with
-extreme outliers). The boxplot exposes both the median and the spread,
-which is the policy-relevant information: a department with high median
-AND high spread has both a structural gap and internal inequality.
-
-**Key finding:** Several Amazonian and highland departments (Loreto,
-Ucayali, Madre de Dios) show both the highest medians and widest spreads,
-confirming that geographic access is the binding constraint in those
-regions — not facility count or activity volume.
-
----
-
-### fig04 — Oferta vs actividad (scatter con outlier cap)
-**File:** `output/figures/fig04_supply_vs_activity.png`
-**Answers:** Pregunta 1 — la oferta de IPRESS se traduce en mayor actividad?
-
-Scatter plot restricted to the 329 districts with at least one emergency
-IPRESS (baseline). X-axis: number of emergency IPRESS; Y-axis: total
-emergency visits. Marker size encodes n_ccpp (population proxy); color
-encodes the composite index (viridis). The Y-axis is capped at the 95th
-percentile; districts above the cap are plotted as triangles at the top
-of the chart and annotated with their real value (e.g., "690k").
-
-**Why filter to n_ipress > 0 and not use log1p:** Filtering sharpens the
-question — "among districts that have emergency supply, does more supply
-generate more activity?" — and keeps axes in natural units for a
-non-technical audience. log1p would answer a different question (how does
-the full distribution look?) and requires explaining the transformation.
-The cap-and-triangle technique preserves honesty (no data is hidden) while
-recovering the legibility of the main cluster.
-
-**Key finding:** There is a positive but noisy relationship between supply
-and activity. Districts with many IPRESS do not automatically report high
-visit volumes — some are high-index (dark colors), others are not,
-suggesting capacity underutilization or reporting gaps.
-
----
-
-### fig05 — Cambio de rango (scatter diagonal)
-**File:** `output/figures/fig05_rank_changes.png`
-**Answers:** Pregunta 4 — que tan robustas son las conclusiones?
-
-Scatter of rank_baseline (x) vs rank_alt (y) for all 1,812 ranked
-districts. A dashed red diagonal marks zero change. The 20 districts with
-the largest absolute rank change are highlighted in orange and labelled
-with their UBIGEO code.
-
-**Why a rank-rank scatter and not a bar chart of rank differences:** A bar
-chart of |rank_baseline - rank_alt| shows magnitude but not direction —
-it cannot distinguish a district that improved from one that worsened.
-The scatter shows both: points below the diagonal improved under the
-alternative spec (closer to an emergency IPRESS than their local supply
-implied), points above worsened. The diagonal is the natural reference
-line; deviation from it is the quantity of interest.
-
-**Key finding:** The vast majority of districts cluster near the diagonal
-(stable conclusions), but a distinct group of ~20 districts deviates
-sharply — all moving below the diagonal. These are districts with no
-local emergency IPRESS but good spatial access to a neighboring district's
-facility: invisible under equal weighting, highly ranked when distance
-gets double weight.
-
----
-
-### fig06 — Heatmap de componentes (tres grupos)
-**File:** `output/figures/fig06_component_heatmap.png`
-**Answers:** Pregunta 3 (que componente explica cada posicion?) and
-Pregunta 4 (que perfil tienen los distritos mas sensibles?).
-
-Heatmap with rows = districts and columns = A_norm (facility availability),
-B_norm (emergency activity), C_norm_inverted (spatial access). Three groups
-separated by blank rows: Top 30 by baseline rank | Top 20 largest rank
-changers | Bottom 30. Color scale viridis [0, 1]; colorbar horizontal at
-the bottom to keep group labels on the right margin unobstructed.
-
-**Why a heatmap and not separate bar charts per component:** Three separate
-bar charts would require the reader to mentally join them to see which
-combination of components explains each district's position. The heatmap
-encodes all three simultaneously per row, making patterns like
-"high C, low A and B" (typical rank changer) or "low everything"
-(typical bottom district) visible at a glance.
-
-**Key finding:** Top districts show high C_norm_inverted (proximity) as the
-dominant component — A and B vary but C is always bright. Bottom districts
-are uniformly dark across all three. The rank-changer group has a
-distinctive profile: dark A and B (no local IPRESS, low activity) but
-bright C (close to a neighbor's emergency IPRESS) — this is precisely the
-profile that the alternative specification rewards with double weight.
+Ver `docs/methodology.md` para el log completo de decisiones metodológicas por tarea.
