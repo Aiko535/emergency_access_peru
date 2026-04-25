@@ -205,3 +205,13 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-specific
+data/raw/
+data/processed/
+.streamlit/secrets.toml
+.vscode/
+docs/references/
+# Folium interactive maps (too large for GitHub)
+output/figures/map04_interactive_national.html
+output/figures/map05_interactive_comparison.html

@@ -1,0 +1,13 @@
+pandas>=2.0
+pyarrow>=12.0
+geopandas>=0.14
+shapely>=2.0
+folium>=0.15
+mapclassify>=0.6
+matplotlib>=3.7
+seaborn>=0.13
+streamlit>=1.30
+streamlit-folium>=0.18
+pyproj>=3.6
+openpyxl>=3.1
+chardet>=5.2
