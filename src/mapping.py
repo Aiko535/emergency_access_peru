@@ -12,7 +12,9 @@ CRS convention: EPSG:4326 for all outputs (matplotlib and Folium).
 from __future__ import annotations
 
 import warnings
-from typing import Optional
+
+import matplotlib
+matplotlib.use("Agg")   # non-interactive backend; must precede pyplot import
 
 import geopandas as gpd
 import mapclassify
@@ -31,8 +33,9 @@ except ImportError:
     _FOLIUM_OK = False
 
 # ── Shared style constants ────────────────────────────────────────────────────
-_CMAP_SEQUENTIAL   = "YlOrRd"
-_CMAP_DIVERGING    = "RdBu_r"
+_CMAP_SEQUENTIAL   = "viridis"   # index maps: map01, map03, map04
+_CMAP_DIVERGING    = "RdBu_r"   # signed rank change: map02 right panel
+_CMAP_MAGNITUDE    = "YlOrRd"   # rank change magnitude: map05
 _EXCL_COLOR        = "#d9d9d9"
 _EXCL_HATCH        = "////"
 _EXCL_ALPHA        = 0.5
@@ -144,45 +147,79 @@ def plot_choropleth_comparison(
     distritos: gpd.GeoDataFrame,
     comparison_df: pd.DataFrame,
 ) -> plt.Figure:
+    """Panel izquierdo: choropleth baseline (viridis, quintiles).
+    Panel derecho: signed rank change = rank_baseline − rank_alt (RdBu_r divergente).
+    Azul (RdBu_r positivo) = rank_baseline > rank_alt = mejora con alternativa.
+    """
     distritos = _to_wgs84(distritos.copy())
 
     gdf = distritos.copy()
     gdf["UBIGEO"] = gdf["UBIGEO"].astype(int)
     cmp = comparison_df.copy()
     cmp["UBIGEO"] = cmp["UBIGEO"].astype(int)
-    merged = gdf.merge(cmp, on="UBIGEO", how="left")
+    # signed_rank_change > 0 means rank number rose under alt (worsened)
+    # signed_rank_change < 0 means rank number fell under alt (improved)
+    cmp["signed_rank_change"] = (
+        cmp["rank_baseline"].astype(float) - cmp["rank_alt"].astype(float)
+    )
+    merged = gdf.merge(cmp[["UBIGEO", "index_baseline", "signed_rank_change"]], on="UBIGEO", how="left")
 
-    included_b = merged[merged["index_baseline"].notna()].copy()
-    included_a = merged[merged["index_alt"].notna()].copy()
-    excluded   = merged[merged["index_baseline"].isna() & merged["index_alt"].isna()].copy()
+    included = merged[merged["index_baseline"].notna()].copy()
+    excluded  = merged[merged["index_baseline"].isna()].copy()
 
-    vmin = min(included_b["index_baseline"].min(), included_a["index_alt"].min())
-    vmax = max(included_b["index_baseline"].max(), included_a["index_alt"].max())
-    norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-    cmap = plt.get_cmap(_CMAP_SEQUENTIAL)
+    # ── Left: baseline viridis quintiles ─────────────────────────────────────
+    scheme_l = _classify(included["index_baseline"], k=5, scheme="quantiles")
+    bins_l   = np.concatenate([[included["index_baseline"].min()], scheme_l.bins])
+    norm_l   = mcolors.BoundaryNorm(bins_l, ncolors=256)
+    cmap_l   = plt.get_cmap(_CMAP_SEQUENTIAL)
 
-    fig, axes = plt.subplots(1, 2, figsize=(18, 9), dpi=_FIG_DPI)
+    # ── Right: signed rank change RdBu_r diverging ────────────────────────────
+    valid_chg = included["signed_rank_change"].dropna()
+    abs_max   = max(abs(valid_chg.min()), abs(valid_chg.max()), 1)
+    norm_r    = mcolors.TwoSlopeNorm(vmin=-abs_max, vcenter=0, vmax=abs_max)
+    cmap_r    = plt.get_cmap(_CMAP_DIVERGING)
+
+    fig, axes = plt.subplots(1, 2, figsize=(20, 10), dpi=_FIG_DPI)
     fig.suptitle(
-        "Comparación índice: Baseline vs Alternativa",
-        fontsize=14, fontweight="bold", y=1.01
+        "Comparación de especificaciones: baseline vs alternativa\n"
+        "Derecha: azul = mejora con alternativa (mayor peso espacial)  |  "
+        "rojo = empeora",
+        fontsize=12, fontweight="bold",
     )
 
-    for ax, col, title in zip(
-        axes,
-        ["index_baseline", "index_alt"],
-        ["Baseline", "Alternativa"],
-    ):
-        ax.set_title(title, fontsize=12, pad=8)
-        ax.set_axis_off()
-        data = included_b if col == "index_baseline" else included_a
-        data.plot(column=col, ax=ax, cmap=cmap, norm=norm,
+    # Left panel
+    axes[0].set_title("Índice baseline (viridis, quintiles)", fontsize=11, pad=8)
+    axes[0].set_axis_off()
+    included.plot(column="index_baseline", ax=axes[0],
+                  cmap=cmap_l, norm=norm_l,
                   edgecolor=_BORDER_COLOR, linewidth=_BORDER_WIDTH)
-        _draw_excluded(ax, excluded)
+    _draw_excluded(axes[0], excluded)
+    sm_l = mcm.ScalarMappable(cmap=cmap_l, norm=norm_l)
+    sm_l.set_array([])
+    cb_l = fig.colorbar(sm_l, ax=axes[0], shrink=0.45, pad=0.02,
+                        ticks=scheme_l.bins)
+    cb_l.set_label("Índice baseline", fontsize=8)
+    cb_l.ax.set_yticklabels([f"{b:.3f}" for b in scheme_l.bins], fontsize=7)
 
-    sm = mcm.ScalarMappable(cmap=cmap, norm=norm)
-    sm.set_array([])
-    cbar = fig.colorbar(sm, ax=axes, shrink=0.6, pad=0.02)
-    cbar.set_label("Índice de acceso a emergencias", fontsize=9)
+    # Right panel
+    axes[1].set_title(
+        "Cambio de rango firmado (rank_baseline − rank_alt)\n"
+        "Azul = mejora con alternativa  |  Rojo = empeora",
+        fontsize=10, pad=8,
+    )
+    axes[1].set_axis_off()
+    included_r = included[included["signed_rank_change"].notna()].copy()
+    included_r.plot(column="signed_rank_change", ax=axes[1],
+                    cmap=cmap_r, norm=norm_r,
+                    edgecolor=_BORDER_COLOR, linewidth=_BORDER_WIDTH)
+    _draw_excluded(axes[1], excluded)
+    sm_r = mcm.ScalarMappable(cmap=cmap_r, norm=norm_r)
+    sm_r.set_array([])
+    cb_r = fig.colorbar(sm_r, ax=axes[1], shrink=0.45, pad=0.02)
+    cb_r.set_label("rank_baseline − rank_alt", fontsize=8)
+
+    handles = [_excluded_patch()]
+    axes[0].legend(handles=handles, loc="lower left", fontsize=7, framealpha=0.8)
 
     fig.tight_layout()
     return fig
@@ -377,7 +414,7 @@ def folium_comparison_interactive(
         data=included[["UBIGEO", "rank_change_abs"]],
         columns=["UBIGEO", "rank_change_abs"],
         key_on="feature.properties.UBIGEO",
-        fill_color=_CMAP_SEQUENTIAL,
+        fill_color=_CMAP_MAGNITUDE,
         fill_opacity=0.75,
         line_opacity=0.2,
         nan_fill_color=_EXCL_COLOR,

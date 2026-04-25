@@ -29,6 +29,7 @@ from mapping import (
     plot_choropleth_national,
     plot_lima_with_ipress,
 )
+from metrics import flag_tiene_emergencia
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
 DATA_DIR   = ROOT / "data" / "processed"
@@ -49,15 +50,9 @@ def load_data():
     index_df  = pd.read_parquet(INDEX_BASELINE)
     comp_df   = pd.read_parquet(COMPARISON_PARQUET)
 
-    flag_col = next(
-        (c for c in ipress.columns if "emergencia" in c.lower()), None
-    )
-    if flag_col:
-        ipress_emerg = ipress[ipress[flag_col].astype(bool)].copy()
-        print(f"  IPRESS de emergencia: {len(ipress_emerg):,} (col '{flag_col}')")
-    else:
-        print("  ADVERTENCIA: sin columna de flag emergencia; usando todas las IPRESS.")
-        ipress_emerg = ipress.copy()
+    flag = flag_tiene_emergencia(ipress, mode="baseline")
+    ipress_emerg = ipress[flag].copy()
+    print(f"  IPRESS de emergencia (baseline flag): {len(ipress_emerg):,} / {len(ipress):,} total")
 
     return distritos, ipress_emerg, index_df, comp_df
 
@@ -93,7 +88,7 @@ def main():
     m.save(str(OUTPUT_DIR / "map05_interactive_comparison.html"))
     print("  Guardado.")
 
-    print("\n✓ Todos los mapas generados en:", OUTPUT_DIR)
+    print("\nOK - Todos los mapas generados en:", OUTPUT_DIR)
 
 
 def plt_close(fig):

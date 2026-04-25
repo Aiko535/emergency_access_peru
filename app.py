@@ -373,7 +373,6 @@ with tab4:
                 "index_alt": "Índice alt.",
                 "rank_baseline": "Rank baseline",
                 "rank_alt": "Rank alt.",
-                "rank_change": "Δ Rank",
                 "rank_change_abs": "Δ Rank (abs)",
             }),
             use_container_width=True,
